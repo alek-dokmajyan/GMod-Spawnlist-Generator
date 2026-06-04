@@ -3,88 +3,161 @@ package net.alek.spawnlistgenerator.util;
 import net.alek.spawnlistgenerator.core.ErrorHandler;
 import net.alek.spawnlistgenerator.core.Logger;
 
-import java.io.*;
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class InstallPathFinder {
+
     public static String installPath;
 
     public static void findGModInstallPath() {
         Logger.Log.info("Determining GMod installation path...");
 
         String steamPath = getSteamInstallPath();
-        if (steamPath == null) {
+
+        if (steamPath == null || steamPath.isBlank()) {
             Logger.Log.error("Steam installation path not found.");
             ErrorHandler.LineUnavailableException();
             return;
         }
 
-        Path gmodDefaultPath = Path.of(steamPath, "steamapps", "common", "GarrysMod");
-        if (Files.exists(gmodDefaultPath)) {
-            installPath = gmodDefaultPath.toString();
-            GUIHandler.gmodPathField.setText(installPath);
+        if (checkForGMod(Path.of(steamPath))) {
             return;
         }
 
-        Path libraryFoldersFile = Path.of(steamPath, "steamapps", "libraryfolders.vdf");
-        if (Files.exists(libraryFoldersFile)) {
-            try (BufferedReader reader = Files.newBufferedReader(libraryFoldersFile)) {
-                Pattern pattern = Pattern.compile("^\\s*\"\\d+\"\\s*\"(.+?)\"\\s*$");
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    Matcher matcher = pattern.matcher(line);
-                    if (matcher.find()) {
-                        String libraryPath = matcher.group(1).replaceAll("\\\\\\\\", "\\\\");
-                        Path potentialGmodPath = Path.of(libraryPath, "steamapps", "common", "GarrysMod");
-                        if (Files.exists(potentialGmodPath)) {
-                            installPath = potentialGmodPath.toString();
-                            GUIHandler.gmodPathField.setText(installPath);
-                            return;
-                        }
-                    }
+        Path libraryFoldersFile = Path.of(
+                steamPath,
+                "steamapps",
+                "libraryfolders.vdf"
+        );
+
+        if (!Files.isRegularFile(libraryFoldersFile)) {
+            Logger.Log.warn("libraryfolders.vdf not found.");
+            return;
+        }
+
+        try {
+            String content = Files.readString(libraryFoldersFile);
+
+            Pattern pathPattern = Pattern.compile("\"path\"\\s*\"([^\"]+)\"");
+
+            Matcher matcher = pathPattern.matcher(content);
+
+            while (matcher.find()) {
+                String libraryPath = matcher.group(1);
+
+                if (libraryPath == null || libraryPath.isBlank()) {
+                    continue;
                 }
-            } catch (IOException e) {
-                ErrorHandler.IOException();
+
+                libraryPath = libraryPath.replace("\\\\", "\\");
+
+                if (checkForGMod(Path.of(libraryPath))) {
+                    return;
+                }
+            }
+
+        } catch (IOException e) {
+            Logger.Log.error("Failed to read libraryfolders.vdf");
+            ErrorHandler.IOException();
+            return;
+        }
+
+        Logger.Log.warn("Garry's Mod installation path not found.");
+    }
+
+    private static boolean checkForGMod(Path steamLibraryRoot) {
+
+        Path[] candidates = {
+                steamLibraryRoot.resolve(
+                        Path.of("steamapps", "common", "GarrysMod")
+                ),
+                steamLibraryRoot.resolve(
+                        Path.of("steamapps", "common", "Garry's Mod")
+                )
+        };
+
+        for (Path candidate : candidates) {
+            if (Files.isDirectory(candidate)) {
+                setInstallPath(candidate);
+                return true;
             }
         }
 
-        Logger.Log.error("Garry's Mod installation path not found.");
-        ErrorHandler.IOException();
+        return false;
+    }
+
+    private static void setInstallPath(Path path) {
+        installPath = path.toAbsolutePath().toString();
+
+        if (GUIHandler.gmodPathField != null) {
+            GUIHandler.gmodPathField.setText(installPath);
+        }
+
+        Logger.Log.info("Found Garry's Mod at: " + installPath);
     }
 
     private static String getSteamInstallPath() {
+
         String[] regKeys = {
+                "HKCU\\Software\\Valve\\Steam",
                 "HKLM\\SOFTWARE\\Valve\\Steam",
                 "HKLM\\SOFTWARE\\WOW6432Node\\Valve\\Steam"
         };
 
         for (String regKey : regKeys) {
             try {
-                ProcessBuilder builder = new ProcessBuilder("reg", "query", regKey, "/v", "InstallPath");
+                ProcessBuilder builder = new ProcessBuilder(
+                        "reg",
+                        "query",
+                        regKey,
+                        "/v",
+                        "InstallPath"
+                );
+
                 builder.redirectErrorStream(true);
+
                 Process process = builder.start();
 
-                try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+                try (BufferedReader reader =
+                             new BufferedReader(
+                                     new InputStreamReader(process.getInputStream()))) {
+
                     String line;
+
                     while ((line = reader.readLine()) != null) {
-                        if (line.contains("InstallPath")) {
-                            String[] parts = line.trim().split("\\s{4,}");
-                            if (parts.length >= 3) {
-                                return parts[2].trim();
+
+                        if (!line.contains("InstallPath")) {
+                            continue;
+                        }
+
+                        String[] parts = line.trim().split("\\s{4,}");
+
+                        if (parts.length >= 3) {
+                            String path = parts[2].trim();
+
+                            if (!path.isBlank()) {
+                                process.waitFor();
+                                return path;
                             }
                         }
                     }
                 }
 
                 process.waitFor();
+
             } catch (IOException e) {
                 ErrorHandler.IOException();
+
             } catch (InterruptedException e) {
                 ErrorHandler.InterruptedException();
                 Thread.currentThread().interrupt();
+                return null;
             }
         }
 

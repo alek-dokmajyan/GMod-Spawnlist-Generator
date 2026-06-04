@@ -6,6 +6,7 @@ import java.util.Date;
 public class Logger {
     private static final String RESET = "\u001B[0m";
     private static final String RED = "\u001B[31m";
+    private static final String YELLOW = "\u001B[33m";
 
     private static final Object lock = new Object();
 
@@ -27,6 +28,8 @@ public class Logger {
             String coloredMessage;
             if (type.equals("ERROR")) {
                 coloredMessage = RED + logMessage + RESET;
+            } else if(type.equals("WARNING")) {
+                coloredMessage = YELLOW + logMessage + RESET;
             } else {
                 coloredMessage = logMessage;
             }
@@ -39,6 +42,10 @@ public class Logger {
     public static class Log {
         public static void info(String message) {
             logWriter(message, "INFO");
+        }
+
+        public static void warn(String message) {
+            logWriter(message, "WARNING");
         }
 
         public static void error(String message) {
